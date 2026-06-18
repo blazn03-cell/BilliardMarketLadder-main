@@ -1,20 +1,17 @@
 ﻿import { createClient } from '@supabase/supabase-js'
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+import {
+  applyCors,
+  errorResponse,
+  getAuthenticatedUser,
+  getRequestId,
+  rateLimit,
+  requireEnv,
+} from './_lib/security.js'
 
-function getBearerToken(req) {
-  const header = req.headers?.authorization || req.headers?.Authorization
-  if (!header) return null
-  const match = header.match(/^Bearer\s+(.+)$/i)
-  return match?.[1] || null
-}
-
-async function getAuthenticatedUser(req) {
-  const token = getBearerToken(req)
-  if (!token) return { user: null, error: 'Missing authorization token' }
-  const { data, error } = await supabase.auth.getUser(token)
-  if (error || !data?.user) return { user: null, error: 'Invalid or expired token' }
-  return { user: data.user, error: null }
-}
+const envCheck = requireEnv(['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])
+const supabase = envCheck.ok
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null
 
 function toSnake(key) { return key.replace(/([A-Z])/g, '_$1').toLowerCase() }
 function rowToSnake(obj) {
@@ -22,16 +19,21 @@ function rowToSnake(obj) {
   return Object.fromEntries(Object.entries(obj).filter(([,v]) => v !== undefined).map(([k,v]) => [toSnake(k), v]))
 }
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  const requestId = getRequestId(req, res)
+  const cors = applyCors(req, res, 'POST, OPTIONS')
+  if (!cors.ok) return errorResponse(res, 403, cors.error, requestId)
   if (req.method === 'OPTIONS') return res.status(200).end()
-  if (req.method !== 'POST')    return res.status(405).json({ error: 'Method not allowed' })
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY)
-    return res.status(200).json({ ok: true, note: 'Supabase not configured' })
+  if (req.method !== 'POST') return errorResponse(res, 405, 'Method not allowed', requestId)
+  if (!envCheck.ok || !supabase) return errorResponse(res, 500, envCheck.error, requestId)
 
-  const { user, error: authError } = await getAuthenticatedUser(req)
-  if (authError) return res.status(401).json({ error: authError })
+  const rl = rateLimit(req, 'sync-state', 60, 60_000)
+  if (!rl.allowed) {
+    res.setHeader('Retry-After', String(rl.retryAfterSec))
+    return errorResponse(res, 429, 'Too many requests', requestId)
+  }
+
+  const { user, error: authError } = await getAuthenticatedUser(req, supabase)
+  if (authError) return errorResponse(res, 401, authError, requestId)
 
   const { players, teams, matches, shares, payments, season, currentRound, s1Priority, settings } = req.body
   try {
@@ -66,8 +68,8 @@ export default async function handler(req, res) {
     }
 
     await supabase.from('app_state').upsert({ id: 1, season: season ?? 1, current_round: currentRound ?? 1, s1_priority: s1Priority ?? false, settings: mergedSettings, updated_at: new Date().toISOString() }, { onConflict: 'id' })
-    return res.status(200).json({ ok: true })
+    return res.status(200).json({ ok: true, requestId })
   } catch (err) {
-    return res.status(500).json({ error: err.message })
+    return errorResponse(res, 500, err.message || 'Cloud sync failed', requestId)
   }
 }

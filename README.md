@@ -24,13 +24,19 @@ Server-side (Vercel or your host):
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `STRIPE_SECRET_KEY`
-- `STRIPE_WEBHOOK_SECRET` (recommended)
+- `STRIPE_WEBHOOK_SECRET` (required for webhook signature verification)
+- `APP_BASE_URL` (for strict CORS allowlist, e.g. `https://your-app.vercel.app`)
+- `ALLOWED_ORIGINS` (optional comma-separated extra origins)
 - `STRIPE_PRICE_REGISTRATION`
 - `STRIPE_PRICE_WEEKLY_DUES`
 - `STRIPE_PRICE_SHARE_TOP2`
 - `STRIPE_PRICE_SHARE_TOP34`
 - `STRIPE_PRICE_SHARE_TOP58`
 - `STRIPE_PRICE_SHARE_UNRANKED`
+
+Recommended DB table for webhook idempotency:
+
+- `webhook_events(event_id text primary key, event_type text, processed_at timestamptz)`
 
 Client-side (set on `window` before app script, or localStorage):
 

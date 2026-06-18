@@ -520,9 +520,13 @@ function App({ authUser, supabaseClient, onLogout }) {
     setCheckoutBusyId(supporter.id);
     setCloudStatus("");
     try {
+      const token = await getAccessToken();
       const response = await fetch("/api/create-checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
         body: JSON.stringify({
           type: "share",
           playerId: String(playerName),
